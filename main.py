@@ -1,57 +1,62 @@
+
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
+import hashlib
 
 app = FastAPI()
 
-# Your verification token
+# ==== eBay config (KEEP THESE IN SYNC WITH EBAY SETTINGS) ====
 VERIFICATION_TOKEN = "12345678901234567890123456789012"
+ENDPOINT_URL = "https://ebay-deletion-endpoint-z0i3.onrender.com/ebay/notifications/deletion"
+# =============================================================
 
 
-# ------------------------------------------------------
-# Root (health check)
-# ------------------------------------------------------
+# ---------------------------
+# Root route (health check)
+# ---------------------------
 @app.get("/")
 async def root():
     return {"status": "running"}
 
 
-# ------------------------------------------------------
-# GET — Required for eBay validation
-# eBay calls: /ebay/notifications/deletion?challenge_code=XYZ
-# ------------------------------------------------------
-@app.get("/ebay/notifications/deletion")
-async def ebay_validation(challenge_code: str = None):
-    # This is REQUIRED — eBay will not accept the endpoint without it
-    if challenge_code:
-        return {"challengeResponse": challenge_code}
+# ---------------------------
+# eBay Deletion Notification
+# ---------------------------
 
-    # For debugging if hit without challenge_code
-    return {"status": "waiting-for-ebay-validation"}
-
-
-# ------------------------------------------------------
-# POST — Actual deletion notifications
-# ------------------------------------------------------
 class EbayDeletionNotification(BaseModel):
-    challengeCode: str | None = None  # sometimes included
-    verificationToken: str | None = None  # may be included
-    # eBay may include additional optional fields via **data
+    challengeCode: str | None = None
+    # eBay may send additional fields (userId, reason, etc.)
+    # We'll just accept the raw body for now.
 
 
+# 1) VALIDATION: eBay sends a GET with ?challenge_code=...
+@app.get("/ebay/notifications/deletion")
+async def ebay_deletion_validation(challenge_code: str | None = None):
+    if challenge_code:
+        # Build the string exactly as eBay expects:
+        # challengeCode + verificationToken + endpointUrl
+        combined = challenge_code + VERIFICATION_TOKEN + ENDPOINT_URL
+
+        # SHA-256 hash -> hex string
+        response_hash = hashlib.sha256(combined.encode("utf-8")).hexdigest()
+
+        # Debug logging (shows up in Render logs)
+        print("eBay validation request")
+        print("challenge_code:", challenge_code)
+        print("response_hash:", response_hash)
+
+        # FastAPI will send this as application/json
+        return {"challengeResponse": response_hash}
+
+    # If someone hits the URL without a challenge_code
+    return {"status": "ok"}
+
+
+# 2) ACTUAL NOTIFICATIONS: eBay sends a POST with JSON body
 @app.post("/ebay/notifications/deletion")
 async def ebay_deletion_handler(request: Request):
-
     data = await request.json()
-
-    # 1. Handle eBay challenge (POST version — sometimes used)
-    if "challengeCode" in data:
-        return {"challengeResponse": data["challengeCode"]}
-
-    # 2. If eBay sends the verificationToken, we ignore it (we already validated on GET)
-    if "verificationToken" in data:
-        print("Received verification token:", data["verificationToken"])
-
-    # 3. Log the received deletion request
     print("Received eBay deletion message:", data)
 
+    # For now we just acknowledge; later you can add your own logic
     return {"ack": "true"}

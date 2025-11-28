@@ -18,6 +18,11 @@ ENDPOINT_URL = "https://ebay-deletion-endpoint-z0i3.onrender.com/ebay/notificati
 async def root():
     return {"status": "running"}
 
+@app.get("/debug/showfile")
+async def show_file():
+    with open("main.py", "r") as f:
+        return {"content": f.read()}
+
 
 # ---------------------------
 # eBay Deletion Notification

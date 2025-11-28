@@ -1,40 +1,77 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query
+from pydantic import BaseModel
+import hashlib
 
 app = FastAPI()
 
-# Your verification token
+# ============================================================
+# eBay config – these MUST match what's in the eBay UI
+# ============================================================
+
 VERIFICATION_TOKEN = "12345678901234567890123456789012"
 
+# This must match the Marketplace account deletion endpoint field
+# exactly, including https:// and the full path.
+ENDPOINT_URL = "https://ebay-deletion-endpoint-z0i3.onrender.com/ebay/notifications/deletion"
+
+
+# ---------------------------
+# Root route (health check)
+# ---------------------------
 @app.get("/")
-async def home():
+async def root():
     return {"status": "running"}
 
-# ---------------------------
-# Marketplace Account Deletion
-# ---------------------------
 
+# ============================================================
+# GET /ebay/notifications/deletion  (challenge handshake)
+# ============================================================
 @app.get("/ebay/notifications/deletion")
-async def ebay_deletion_get(challenge_code: str = None):
+async def ebay_deletion_challenge(
+    challenge_code: str = Query(..., alias="challenge_code")
+):
     """
-    eBay GET challenge handshake.
-    Must return the SAME challenge_code back.
+    Handle eBay's validation challenge.
+
+    eBay sends:
+      GET /ebay/notifications/deletion?challenge_code=...
+
+    We must respond with:
+      {
+        "challengeResponse": SHA256(challengeCode + verificationToken + endpointURL)
+      }
     """
-    if challenge_code:
-        return {"challengeResponse": challenge_code}
-    return {"status": "ok"}
+
+    # Build the string in EXACT order: challengeCode + verificationToken + endpointURL
+    raw = f"{challenge_code}{VERIFICATION_TOKEN}{ENDPOINT_URL}"
+    challenge_response = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    print("Received challenge_code:", challenge_code)
+    print("Computed challengeResponse:", challenge_response)
+
+    return {"challengeResponse": challenge_response}
+
+
+# ============================================================
+# POST /ebay/notifications/deletion  (real notifications)
+# ============================================================
+
+class EbayDeletionNotification(BaseModel):
+    # We'll accept anything, but define a couple of common fields.
+    # Extra JSON keys will be allowed.
+    userId: str | None = None
+
+    class Config:
+        extra = "allow"
+
 
 @app.post("/ebay/notifications/deletion")
-async def ebay_deletion_post(request: Request):
+async def ebay_deletion_handler(request: Request):
     """
-    eBay POST notification.
-    They may include challengeCode here as well.
+    Handle actual deletion notifications from eBay.
+    For now we just log the payload and ack.
     """
     data = await request.json()
-
-    # If POST includes a challengeCode, return it back
-    if "challengeCode" in data:
-        return {"challengeResponse": data["challengeCode"]}
-
-    # Otherwise just ACK the notification
-    print("Received deletion notification:", data)
+    print("Received eBay deletion message:", data)
     return {"ack": "true"}
+

@@ -1,18 +1,40 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
 app = FastAPI()
 
-class DeleteRequest(BaseModel):
-    itemId: str
 
-@app.post("/delete")
-async def delete_item(data: DeleteRequest):
-    print("============ eBay Delete Webhook ============")
-    print("Item:", data.itemId)
-    print("=============================================")
-    return {"ack": "true"}
-
+# ---------------------------
+# Root route (health check)
+# ---------------------------
 @app.get("/")
 async def root():
     return {"status": "running"}
+
+
+# ---------------------------
+# eBay Deletion Notification
+# ---------------------------
+
+class EbayDeletionNotification(BaseModel):
+    challengeCode: str | None = None
+    # eBay may also send userId, reason, or other fields
+    # We accept them but don't require them
+    # using **kwargs in the POST route
+
+
+@app.post("/ebay/notifications/deletion")
+async def ebay_deletion_handler(request: Request):
+
+    data = await request.json()
+
+    # 1: Handle eBay Challenge handshake
+    if "challengeCode" in data:
+        return {"challengeResponse": data["challengeCode"]}
+
+    # 2: Log the message (for now)
+    print("Received eBay deletion message:", data)
+
+    # 3: Acknowledge
+    return {"ack": "true"}
+
